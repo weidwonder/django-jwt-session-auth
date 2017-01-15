@@ -50,6 +50,14 @@ JWT_AUTH = {
 }
 ```
 
+login user by this
+
+```python
+from django_jwt_session_auth import jwt_login
+token = jwt_login(your_user, request, expire=your_expire_time_in_sec) # also you can set default expire time in settings
+# then return this token to client. After that every time client requests, set HTTP header Authorization="JWT <token>"
+```
+
 finally you will get the request jwt user by
 
 ```python
@@ -60,6 +68,7 @@ class SomeView(View):
         data = do_sth()
         return Response(data)
 ```
+
 
 # DEFAULT SETTINGS
 
