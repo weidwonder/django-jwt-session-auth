@@ -1,5 +1,4 @@
 # coding=utf-8
-
 """
 MIT License
 Copyright (c) [2017] [weidwonder]
@@ -32,19 +31,49 @@ user_jwt_logged_in = Signal(['request', 'user'])
 DEFAULT_JWT_AUTH_SETTING = {
     'PREFIX': 'JWT',
     'ALGORITHM': 'HS256',
-    'DECODER': 'django_jwt_auth.jwt_decoder',
-    'ENCODER': 'django_jwt_auth.jwt_encoder',
+    'DECODER': 'django_jwt_session_auth.jwt_decoder',
+    'ENCODER': 'django_jwt_session_auth.jwt_encoder',
     'SECRET': '',  # default is django.conf.settings.SECRET_KEY
     'PAYLOAD_TO_USER': None,
     'USER_TO_PAYLOAD': None,
     'USER_KEY': 'pk',
+    'TEST_USER_GETTER': None,
     'SESSION': {
         'EXPIRE': 2592000,
         'PREFIX': 'JWT_AUTH_CACHE:'
     }
 }
 
-jwt_settings = {}
+
+class LazyJwtSettings(object):
+    """ Lazy loaded settings for JWT_AUTH
+    """
+
+    _settings = {}
+
+    def __getitem__(self, item):
+        if not self._settings:
+            self._load_settings()
+        return self._settings[item]
+
+    def _load_settings(self):
+        self._settings = {}
+
+        # check settings
+        user_defined_setting = getattr(django_settings, 'JWT_AUTH', {})
+
+        self._settings = DEFAULT_JWT_AUTH_SETTING.copy()
+        self._settings['SESSION'].update(user_defined_setting.pop('SESSION', {}))
+        self._settings.update(user_defined_setting)
+
+        assert self._settings.get('PAYLOAD_TO_USER'), (u'JWT_AUTH settings\' `PAYLOAD_TO_USER` must be settled.\n'
+                                                       u'And it should return a user instance(whither it user-defined or not) '
+                                                       u'or None.')
+        assert self._settings.get('USER_TO_PAYLOAD'), (u'JWT_AUTH settings\' `USER_TO_PAYLOAD` must be settled.\n'
+                                                       u'And it should return a serializable dict payload')
+
+
+jwt_settings = LazyJwtSettings()
 
 
 def get_authorization_header(request):
@@ -62,13 +91,15 @@ def get_authorization_header(request):
 
 def jwt_decoder(token):
     try:
-        return jwt.decode(token, jwt_settings['SECRET'] or django_settings.SECRET_KEY, algorithms=(jwt_settings['ALGORITHM'],))
+        return jwt.decode(token, jwt_settings['SECRET'] or django_settings.SECRET_KEY,
+                          algorithms=(jwt_settings['ALGORITHM'],))
     except:
         return None
 
 
 def jwt_encoder(payload):
-    return jwt.encode(payload, jwt_settings['SECRET'] or django_settings.SECRET_KEY, algorithm=jwt_settings['ALGORITHM'])
+    return jwt.encode(payload, jwt_settings['SECRET'] or django_settings.SECRET_KEY,
+                      algorithm=jwt_settings['ALGORITHM'])
 
 
 class JwtSession(object):
@@ -89,6 +120,8 @@ class JwtSession(object):
         return cls(key, default_expire, storage=data)
 
     def save(self):
+        """ save session to cache
+        """
         if self.__storage__:
             cache.set(self.__key__, self.__storage__, self.__expire__)
 
@@ -120,32 +153,17 @@ class JwtAuthMiddleware(object):
 
     user_key_prefix = ''
 
+    _test_user = None
+
     def __init__(self, get_response=None):
-        """ 
-        """
         self.get_response = get_response
-
-        global jwt_settings
-
-        # check settings 
-        user_defined_setting = getattr(django_settings, 'JWT_AUTH', {})
-
-        jwt_settings = DEFAULT_JWT_AUTH_SETTING.copy()
-        jwt_settings['SESSION'].update(user_defined_setting.pop('SESSION', {}))
-        jwt_settings.update(user_defined_setting)
         self.user_key_prefix = jwt_settings['SESSION']['PREFIX']
-
-        assert jwt_settings.get('PAYLOAD_TO_USER'), (u'JWT_AUTH settings\' `PAYLOAD_TO_USER` must be settled.\n'
-                                                     u'And it should return a user instance(whither it user-defined or not) '
-                                                     u'or None.')
-        assert jwt_settings.get('USER_TO_PAYLOAD'), (u'JWT_AUTH settings\' `USER_TO_PAYLOAD` must be settled.\n'
-                                                     u'And it should return a serializable dict payload')
 
     def __call__(self, request, *args, **kws):
         jwt_val = get_authorization_header(request)
         token = self._get_token(jwt_val)
         if not token:
-            request.jwt_user = None
+            request.jwt_user = None or self.test_user
             request.jwt_session = self._get_empty_jwt_session()
         else:
             decoder = self._get_decoder()
@@ -158,8 +176,23 @@ class JwtAuthMiddleware(object):
         request.jwt_session.save()
         return response
 
+    @property
+    def test_user(self):
+        """ load test user if TEST_USER_GETTER is exists
+        """
+        test_user_getter = jwt_settings['TEST_USER_GETTER']
+        if not self._test_user and test_user_getter:
+            test_user_getter = import_string(test_user_getter)
+            self.__class__._test_user = test_user_getter()
+        return self._test_user
+
     @classmethod
     def get_jwt_session(cls, user, expire=None):
+        """ get specific user jwt_session
+        :param user: user
+        :param expire: expire time in seconds.
+        :return: JwtSession instance
+        """
         user_key = jwt_settings['USER_KEY']
         if not user:
             return cls._get_empty_jwt_session()
@@ -185,14 +218,16 @@ class JwtAuthMiddleware(object):
 
     @classmethod
     def _get_empty_jwt_session(cls):
+        """ get empty jwt session
+        """
         return JwtSession(cls.user_key_prefix + 'empty', None, {})
 
     @classmethod
     def _get_decoder(cls):
-        """ get jwt token decoder 
+        """ get jwt token decoder
         """
         decoder_entry = jwt_settings['DECODER']
-        if decoder_entry == 'django_jwt_auth.jwt_decoder':
+        if decoder_entry == 'django_jwt_session_auth.jwt_decoder':
             return jwt_decoder
         elif isinstance(decoder_entry, basestring):
             return import_string(decoder_entry)
@@ -201,10 +236,10 @@ class JwtAuthMiddleware(object):
 
     @classmethod
     def _get_encoder(cls):
-        """ get jwt token decoder 
+        """ get jwt token decoder
         """
         encoder_entry = jwt_settings['ENCODER']
-        if encoder_entry == 'django_jwt_auth.jwt_encoder':
+        if encoder_entry == 'django_jwt_session_auth.jwt_encoder':
             return jwt_encoder
         elif isinstance(encoder_entry, basestring):
             return import_string(encoder_entry)
@@ -212,6 +247,8 @@ class JwtAuthMiddleware(object):
             return encoder_entry
 
     def _get_token(self, jwt_val):
+        """get token from jwt_val
+        """
         try:
             prefix, token = jwt_val.split()
         except ValueError:
