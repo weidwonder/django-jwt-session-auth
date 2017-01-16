@@ -163,7 +163,7 @@ class JwtAuthMiddleware(object):
         jwt_val = get_authorization_header(request)
         token = self._get_token(jwt_val)
         if not token:
-            request.jwt_user = None or self.test_user
+            request.jwt_user = None or (self.test_user if django_settings.DEBUG else None)
             request.jwt_session = self._get_empty_jwt_session()
         else:
             decoder = self._get_decoder()
