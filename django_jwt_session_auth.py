@@ -102,14 +102,14 @@ def jwt_encoder(payload):
                       algorithm=jwt_settings['ALGORITHM'])
 
 
-class JwtSession(object):
+class JwtSession(dict):
     """ jwt authenticated session
     """
 
     __slot__ = ('__storage__', '__key__', '__expire__')
 
     @classmethod
-    def get(cls, key, expire=None):
+    def from_key(cls, key, expire=None):
         """ get jwt session corresponding to the key.
         :param key: session cache key
         :param expire: default expire time(Seconds)
@@ -130,17 +130,20 @@ class JwtSession(object):
         self.__dict__['__expire__'] = expire
         self.__dict__['__storage__'] = storage or {}
 
-    def __getattr__(self, item):
-        return self.__storage__[item]
-
-    def __setattr__(self, key, value):
-        self.__storage__[key] = value
-
     def __getitem__(self, item):
         return self.__storage__[item]
 
     def __setitem__(self, key, value):
         self.__storage__[key] = value
+
+    def __str__(self):
+        return repr(self.__storage__)
+
+    def __repr__(self):
+        return '<JwtSession %s>' % self.__dict__['__key__']
+
+    def get(self, k, d=None):
+        return self.__storage__.get(k, d)
 
 
 class JwtAuthMiddleware(object):
@@ -197,7 +200,7 @@ class JwtAuthMiddleware(object):
         if not user:
             return cls._get_empty_jwt_session()
         session_key = cls.user_key_prefix + str(getattr(user, user_key))
-        session = JwtSession.get(session_key, expire=expire)
+        session = JwtSession.from_key(session_key, expire=expire)
         return session
 
     @classmethod
