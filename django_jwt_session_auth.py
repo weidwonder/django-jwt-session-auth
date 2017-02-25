@@ -23,6 +23,7 @@ import jwt
 from django.conf import settings as django_settings
 from django.core.cache import cache
 from django.dispatch.dispatcher import Signal
+from django.utils.decorators import classproperty
 from django.utils.module_loading import import_string
 from six import text_type
 
@@ -39,15 +40,13 @@ DEFAULT_JWT_AUTH_SETTING = {
     'USER_KEY': 'pk',
     'TEST_USER_GETTER': None,
     'SESSION': {
-        'EXPIRE': 2592000,
+        'EXPIRE': 3600 * 24 * 2,
         'PREFIX': 'JWT_AUTH_CACHE:'
     }
 }
 
 
-class LazyJwtSettings(object):
-    """ Lazy loaded settings for JWT_AUTH
-    """
+class LazySettings(object):
 
     _settings = {}
 
@@ -73,7 +72,7 @@ class LazyJwtSettings(object):
                                                        u'And it should return a serializable dict payload')
 
 
-jwt_settings = LazyJwtSettings()
+jwt_settings = LazySettings()
 
 
 def get_authorization_header(request):
@@ -154,13 +153,11 @@ class JwtAuthMiddleware(object):
     if the authentication failed, the `request.jwt_user` will be None, and `jwt_session` will be a empty JwtSession.
     """
 
-    user_key_prefix = ''
-
+    _user_key_prefix = ''
     _test_user = None
 
     def __init__(self, get_response=None):
         self.get_response = get_response
-        self.user_key_prefix = jwt_settings['SESSION']['PREFIX']
 
     def __call__(self, request, *args, **kws):
         jwt_val = get_authorization_header(request)
@@ -179,15 +176,21 @@ class JwtAuthMiddleware(object):
         request.jwt_session.save()
         return response
 
-    @property
-    def test_user(self):
+    @classproperty
+    def user_key_prefix(cls):
+        if not cls._user_key_prefix:
+            cls._user_key_prefix = jwt_settings['SESSION']['PREFIX']
+        return cls._user_key_prefix
+
+    @classproperty
+    def test_user(cls):
         """ load test user if TEST_USER_GETTER is exists
         """
         test_user_getter = jwt_settings['TEST_USER_GETTER']
-        if not self._test_user and test_user_getter:
+        if not cls._test_user and test_user_getter:
             test_user_getter = import_string(test_user_getter)
-            self.__class__._test_user = test_user_getter()
-        return self._test_user
+            cls._test_user = test_user_getter()
+        return cls._test_user
 
     @classmethod
     def get_jwt_session(cls, user, expire=None):
@@ -259,6 +262,7 @@ class JwtAuthMiddleware(object):
         default_prefix = jwt_settings['PREFIX']
         if prefix != default_prefix:
             return None
+        token = token.decode('utf8')
         return token
 
     def _get_payload_to_user_handler(self):
