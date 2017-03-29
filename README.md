@@ -8,7 +8,7 @@ Simple auth-session implement by integrating jwt with django. Decouple django bu
 # Attention
 
 Now, this version only support over django-1.10, cause django has updated its middleware structure.
-Lower version will get support in the future.
+Lower version will get supported in the future.
 
 # Quickstart
 
